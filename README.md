@@ -6,8 +6,6 @@ key and the model choice; apps send a prompt and a schema and read back JSON.
 It does not validate the answer against the schema — validate it in the caller
 with your own zod schema.
 
-Source: `extensions/models/opencode.ts`. Tests: `extensions/models/opencode_test.ts`.
-
 ## Settings
 
 | Setting | Default | Meaning |
