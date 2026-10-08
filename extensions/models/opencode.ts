@@ -19,18 +19,31 @@ export const DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
 
 /** Settings fixed once per model instance. */
 export const GlobalArgsSchema = z.object({
-  apiKey: z.string().min(1).meta({ sensitive: true, description: "OpenCode API key. Reference it from a vault." }),
-  model: z.string().min(1).describe("OpenCode Zen model id, e.g. deepseek-v4.1-flash or claude-opus-5-5."),
-  baseUrl: z.string().min(1).default(DEFAULT_BASE_URL).describe("OpenCode Zen base URL."),
-  timeoutMs: z.number().int().positive().default(120000).describe("Give up on a request after this many milliseconds."),
+  apiKey: z.string().min(1).meta({
+    sensitive: true,
+    description: "OpenCode API key. Reference it from a vault.",
+  }),
+  model: z.string().min(1).describe(
+    "OpenCode Zen model id, e.g. deepseek-v4.1-flash or claude-opus-5-5.",
+  ),
+  baseUrl: z.string().min(1).default(DEFAULT_BASE_URL).describe(
+    "OpenCode Zen base URL.",
+  ),
+  timeoutMs: z.number().int().positive().default(120000).describe(
+    "Give up on a request after this many milliseconds.",
+  ),
 });
 export type Settings = z.infer<typeof GlobalArgsSchema>;
 
 export const AskArgsSchema = z.object({
   system: z.string().optional().describe("System prompt."),
   prompt: z.string().describe("The user prompt."),
-  schema: z.record(z.string(), z.unknown()).describe("JSON Schema the answer must follow."),
-  name: z.string().min(1).default("answer").describe("Data name to store the answer under. `latest` is reserved."),
+  schema: z.record(z.string(), z.unknown()).describe(
+    "JSON Schema the answer must follow.",
+  ),
+  name: z.string().min(1).default("answer").describe(
+    "Data name to store the answer under. `latest` is reserved.",
+  ),
 });
 export type AskArgs = z.infer<typeof AskArgsSchema>;
 
@@ -72,7 +85,10 @@ async function send(
   deps: Deps,
 ): Promise<Reply> {
   const doFetch = deps.fetch ?? globalThis.fetch;
-  const res = await doFetch(url, { ...init, signal: AbortSignal.timeout(settings.timeoutMs) });
+  const res = await doFetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(settings.timeoutMs),
+  });
   const text = await res.text();
   let json: unknown;
   try {
@@ -82,8 +98,11 @@ async function send(
   }
   if (!res.ok) {
     // deno-lint-ignore no-explicit-any
-    const why = (json as any)?.error?.message || (json as any)?.message || text.trim() || res.statusText;
-    throw new Error(`OpenCode Zen refused the request (HTTP ${res.status}): ${why}`);
+    const why = (json as any)?.error?.message || (json as any)?.message ||
+      text.trim() || res.statusText;
+    throw new Error(
+      `OpenCode Zen refused the request (HTTP ${res.status}): ${why}`,
+    );
   }
   return { ok: true, status: res.status, json, text };
 }
@@ -102,7 +121,11 @@ function parseAnswer(text: string): unknown {
 }
 
 /** Ask the configured model; returns the stored answer. */
-export async function ask(args: AskArgs, settings: Settings, deps: Deps = {}): Promise<Answer> {
+export async function ask(
+  args: AskArgs,
+  settings: Settings,
+  deps: Deps = {},
+): Promise<Answer> {
   const id = settings.model;
   const messages = [{ role: "user", content: args.prompt }];
   let json: unknown;
@@ -114,56 +137,84 @@ export async function ask(args: AskArgs, settings: Settings, deps: Deps = {}): P
       `Model "${id}" is a GPT model, which OpenCode Zen serves only through /responses. GPT models are not supported; use a Claude, DeepSeek, Kimi or GLM model.`,
     );
   } else if (id.startsWith("claude-")) {
-    const { json: reply } = await send(`${base(settings)}/messages`, {
-      method: "POST",
-      headers: {
-        "x-api-key": settings.apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "user-agent": USER_AGENT,
+    const { json: reply } = await send(
+      `${base(settings)}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": settings.apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+          "user-agent": USER_AGENT,
+        },
+        body: JSON.stringify({
+          model: id,
+          max_tokens: MAX_TOKENS,
+          ...(args.system ? { system: args.system } : {}),
+          messages,
+          output_config: {
+            format: { type: "json_schema", schema: args.schema },
+          },
+        }),
       },
-      body: JSON.stringify({
-        model: id,
-        max_tokens: MAX_TOKENS,
-        ...(args.system ? { system: args.system } : {}),
-        messages,
-        output_config: { format: { type: "json_schema", schema: args.schema } },
-      }),
-    }, settings, deps);
+      settings,
+      deps,
+    );
     if (reply?.stop_reason !== "end_turn") {
-      throw new Error(`${id} gave no complete answer (stop reason: ${reply?.stop_reason ?? "unknown"}).`);
+      throw new Error(
+        `${id} gave no complete answer (stop reason: ${
+          reply?.stop_reason ?? "unknown"
+        }).`,
+      );
     }
     // deno-lint-ignore no-explicit-any
     const text = reply?.content?.find((c: any) => c.type === "text")?.text;
-    if (typeof text !== "string") throw new Error(`${id} returned no text block in its answer.`);
+    if (typeof text !== "string") {
+      throw new Error(`${id} returned no text block in its answer.`);
+    }
     json = parseAnswer(text);
     inputTokens = reply?.usage?.input_tokens ?? 0;
     outputTokens = reply?.usage?.output_tokens ?? 0;
   } else {
-    const { json: reply } = await send(`${base(settings)}/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${settings.apiKey}`,
-        "content-type": "application/json",
-        "user-agent": USER_AGENT,
+    const { json: reply } = await send(
+      `${base(settings)}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${settings.apiKey}`,
+          "content-type": "application/json",
+          "user-agent": USER_AGENT,
+        },
+        body: JSON.stringify({
+          model: id,
+          messages: args.system
+            ? [{ role: "system", content: args.system }, ...messages]
+            : messages,
+          tools: [{
+            type: "function",
+            function: {
+              name: "answer",
+              description: "Return the answer in this shape.",
+              parameters: args.schema,
+            },
+          }],
+          tool_choice: "required",
+        }),
       },
-      body: JSON.stringify({
-        model: id,
-        messages: args.system ? [{ role: "system", content: args.system }, ...messages] : messages,
-        tools: [{
-          type: "function",
-          function: { name: "answer", description: "Return the answer in this shape.", parameters: args.schema },
-        }],
-        tool_choice: "required",
-      }),
-    }, settings, deps);
+      settings,
+      deps,
+    );
     const choice = reply?.choices?.[0];
     const call = choice?.message?.tool_calls?.[0];
     if (choice?.finish_reason === "length") {
       throw new Error(`${id} gave no complete answer (finish reason: length).`);
     }
     if (typeof call?.function?.arguments !== "string") {
-      throw new Error(`${id} did not call the answer tool (finish reason: ${choice?.finish_reason ?? "unknown"}).`);
+      throw new Error(
+        `${id} did not call the answer tool (finish reason: ${
+          choice?.finish_reason ?? "unknown"
+        }).`,
+      );
     }
     json = parseAnswer(call.function.arguments);
     inputTokens = reply?.usage?.prompt_tokens ?? 0;
@@ -179,18 +230,36 @@ export async function ask(args: AskArgs, settings: Settings, deps: Deps = {}): P
 }
 
 /** List the model ids the account can use. */
-export async function listModels(settings: Settings, deps: Deps = {}): Promise<Catalog> {
-  const { json } = await send(`${base(settings)}/models`, {
-    method: "GET",
-    headers: { authorization: `Bearer ${settings.apiKey}`, "user-agent": USER_AGENT },
-  }, settings, deps);
+export async function listModels(
+  settings: Settings,
+  deps: Deps = {},
+): Promise<Catalog> {
+  const { json } = await send(
+    `${base(settings)}/models`,
+    {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${settings.apiKey}`,
+        "user-agent": USER_AGENT,
+      },
+    },
+    settings,
+    deps,
+  );
   // deno-lint-ignore no-explicit-any
-  const models: string[] = (json?.data ?? []).map((m: any) => m.id).filter((id: unknown) => typeof id === "string");
-  return { models, fetchedAt: (deps.now ?? (() => new Date()))().toISOString() };
+  const models: string[] = (json?.data ?? []).map((m: any) => m.id).filter((
+    id: unknown,
+  ) => typeof id === "string");
+  return {
+    models,
+    fetchedAt: (deps.now ?? (() => new Date()))().toISOString(),
+  };
 }
 
 /** What the methods call. Tests swap `fetch` here to check the wiring. */
-export const behaviour: { fetch: typeof globalThis.fetch } = { fetch: globalThis.fetch };
+export const behaviour: { fetch: typeof globalThis.fetch } = {
+  fetch: globalThis.fetch,
+};
 
 interface MethodContext {
   globalArgs: Settings;
@@ -207,7 +276,8 @@ export const model = {
   globalArguments: GlobalArgsSchema,
   resources: {
     answer: {
-      description: "A model's JSON answer to one ask, with the model used and token counts.",
+      description:
+        "A model's JSON answer to one ask, with the model used and token counts.",
       schema: AnswerSchema,
       lifetime: "infinite" as const,
       garbageCollection: 20,
@@ -221,13 +291,18 @@ export const model = {
   },
   methods: {
     ask: {
-      description: "Send a prompt and a JSON Schema to the configured model and store its JSON answer under `name`.",
+      description:
+        "Send a prompt and a JSON Schema to the configured model and store its JSON answer under `name`.",
       arguments: AskArgsSchema,
       execute: async (args: AskArgs, context: MethodContext) => {
         if (args.name === "latest") {
-          throw new Error('The data name "latest" is reserved by swamp; choose another `name`.');
+          throw new Error(
+            'The data name "latest" is reserved by swamp; choose another `name`.',
+          );
         }
-        const answer = await ask(args, context.globalArgs, { fetch: behaviour.fetch });
+        const answer = await ask(args, context.globalArgs, {
+          fetch: behaviour.fetch,
+        });
         const handle = await context.writeResource("answer", args.name, answer);
         return { dataHandles: [handle] };
       },
@@ -236,8 +311,14 @@ export const model = {
       description: "List the model ids OpenCode Zen offers this account.",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: MethodContext) => {
-        const catalog = await listModels(context.globalArgs, { fetch: behaviour.fetch });
-        const handle = await context.writeResource("catalog", "catalog", catalog);
+        const catalog = await listModels(context.globalArgs, {
+          fetch: behaviour.fetch,
+        });
+        const handle = await context.writeResource(
+          "catalog",
+          "catalog",
+          catalog,
+        );
         return { dataHandles: [handle] };
       },
     },
