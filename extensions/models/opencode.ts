@@ -15,6 +15,7 @@
  */
 import { z } from "npm:zod@4";
 
+/** Base URL of the OpenCode Zen API, used when `baseUrl` is not set. */
 export const DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
 
 /** Settings fixed once per model instance. */
@@ -33,8 +34,10 @@ export const GlobalArgsSchema = z.object({
     "Give up on a request after this many milliseconds.",
   ),
 });
+/** The settings of one model instance. */
 export type Settings = z.infer<typeof GlobalArgsSchema>;
 
+/** Arguments for `ask`: optional system prompt, the prompt, the JSON Schema the answer must follow, and the data name to store it under. */
 export const AskArgsSchema = z.object({
   system: z.string().optional().describe("System prompt."),
   prompt: z.string().describe("The user prompt."),
@@ -45,20 +48,25 @@ export const AskArgsSchema = z.object({
     "Data name to store the answer under. `latest` is reserved.",
   ),
 });
+/** The arguments `ask` accepts. */
 export type AskArgs = z.infer<typeof AskArgsSchema>;
 
+/** A model's JSON answer to one `ask`, with the model used and token counts. */
 export const AnswerSchema = z.object({
   model: z.string(),
   json: z.unknown(),
   usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
   askedAt: z.iso.datetime(),
 });
+/** The stored answer of one `ask`. */
 export type Answer = z.infer<typeof AnswerSchema>;
 
+/** The model ids the account can use, and when they were fetched. */
 export const CatalogSchema = z.object({
   models: z.array(z.string()),
   fetchedAt: z.iso.datetime(),
 });
+/** The stored result of `models`. */
 export type Catalog = z.infer<typeof CatalogSchema>;
 
 /** What the methods reach outside for. Tests replace these. */
@@ -270,6 +278,7 @@ interface MethodContext {
   ) => Promise<{ name: string }>;
 }
 
+/** The model type: `ask` stores a JSON answer, `models` stores the list of usable model ids. */
 export const model = {
   type: "@mesgme/opencode",
   version: "2026.10.07.1",
