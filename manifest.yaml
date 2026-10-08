@@ -2,5 +2,8 @@ manifestVersion: 1
 name: "@mesgme/opencode"
 version: "2026.10.07.1"
 description: "Ask an OpenCode Zen model for JSON matching a schema you give it. Holds the API key and the model choice once per instance."
+additionalFiles:
+  - README.md
+  - LICENSE
 models:
   - opencode.ts
