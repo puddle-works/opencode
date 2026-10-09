@@ -3,8 +3,8 @@
  *
  * Holds the OpenCode API key and the model choice once per instance. The `ask`
  * method sends a prompt and a JSON Schema and stores the model's JSON answer;
- * `models` lists what the account can use. It does not validate the answer
- * against the schema: callers do that with their own zod schema.
+ * `models` lists what the account can use. `ask` validates the answer against
+ * the supplied schema and retries rejected answers with feedback.
  *
  * Routing by model id:
  * - `claude-*` → POST /messages (Anthropic format, `x-api-key`, `output_config`)
@@ -14,6 +14,7 @@
  * @module
  */
 import { z } from "npm:zod@4";
+import { Validator } from "npm:@cfworker/json-schema@4.1.1";
 
 /** Base URL of the OpenCode Zen API, used when `baseUrl` is not set. */
 export const DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
@@ -44,6 +45,9 @@ export const AskArgsSchema = z.object({
   schema: z.record(z.string(), z.unknown()).describe(
     "JSON Schema the answer must follow.",
   ),
+  maxAttempts: z.number().int().min(1).max(5).default(2).describe(
+    "Maximum answer attempts for invalid or incomplete responses.",
+  ),
   name: z.string().min(1).default("answer").describe(
     "Data name to store the answer under. `latest` is reserved.",
   ),
@@ -55,6 +59,7 @@ export type AskArgs = z.infer<typeof AskArgsSchema>;
 export const AnswerSchema = z.object({
   model: z.string(),
   json: z.unknown(),
+  attempts: z.number().int().positive(),
   usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }),
   askedAt: z.iso.datetime(),
 });
@@ -75,7 +80,7 @@ export interface Deps {
   now?: () => Date;
 }
 
-const USER_AGENT = "mesgme-opencode/2026.10.07.1";
+const USER_AGENT = "mesgme-opencode/2026.10.09.1";
 const MAX_TOKENS = 16000;
 
 interface Reply {
@@ -119,32 +124,56 @@ function base(settings: Settings): string {
   return settings.baseUrl.replace(/\/+$/, "");
 }
 
-function parseAnswer(text: string): unknown {
+interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+class RejectedAnswer extends Error {
+  readonly raw: string;
+  constructor(reason: string, raw: string, readonly usage: TokenUsage) {
+    super(reason);
+    this.raw = raw.slice(0, 2048);
+  }
+}
+
+function parseAnswer(text: string, usage: TokenUsage): unknown {
   try {
     return JSON.parse(text);
   } catch {
     const head = text.length > 80 ? `${text.slice(0, 80)}…` : text;
-    throw new Error(`The answer was not JSON: ${head}`);
+    throw new RejectedAnswer(`The answer was not JSON: ${head}`, text, usage);
   }
 }
 
-/** Ask the configured model; returns the stored answer. */
-export async function ask(
+function rawAnswer(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value ?? "") ?? "";
+}
+
+interface Message {
+  role: "user";
+  content: string;
+}
+
+/** One request. Only answer-shape failures become RejectedAnswer. */
+async function askOnce(
+  messages: Message[],
   args: AskArgs,
   settings: Settings,
-  deps: Deps = {},
-): Promise<Answer> {
+  deps: Deps,
+  validator: Validator,
+): Promise<{ json: unknown; usage: TokenUsage }> {
   const id = settings.model;
-  const messages = [{ role: "user", content: args.prompt }];
-  let json: unknown;
-  let inputTokens = 0;
-  let outputTokens = 0;
-
   if (id.startsWith("gpt-")) {
     throw new Error(
       `Model "${id}" is a GPT model, which OpenCode Zen serves only through /responses. GPT models are not supported; use a Claude, DeepSeek, Kimi or GLM model.`,
     );
-  } else if (id.startsWith("claude-")) {
+  }
+
+  let raw: string;
+  let usage: TokenUsage;
+  if (id.startsWith("claude-")) {
     const { json: reply } = await send(
       `${base(settings)}/messages`,
       {
@@ -168,21 +197,29 @@ export async function ask(
       settings,
       deps,
     );
+    usage = {
+      inputTokens: reply?.usage?.input_tokens ?? 0,
+      outputTokens: reply?.usage?.output_tokens ?? 0,
+    };
+    // deno-lint-ignore no-explicit-any
+    const text = reply?.content?.find((c: any) => c.type === "text")?.text;
+    raw = rawAnswer(text ?? reply?.content);
     if (reply?.stop_reason !== "end_turn") {
-      throw new Error(
+      throw new RejectedAnswer(
         `${id} gave no complete answer (stop reason: ${
           reply?.stop_reason ?? "unknown"
         }).`,
+        raw,
+        usage,
       );
     }
-    // deno-lint-ignore no-explicit-any
-    const text = reply?.content?.find((c: any) => c.type === "text")?.text;
     if (typeof text !== "string") {
-      throw new Error(`${id} returned no text block in its answer.`);
+      throw new RejectedAnswer(
+        `${id} returned no text block in its answer.`,
+        raw,
+        usage,
+      );
     }
-    json = parseAnswer(text);
-    inputTokens = reply?.usage?.input_tokens ?? 0;
-    outputTokens = reply?.usage?.output_tokens ?? 0;
   } else {
     const { json: reply } = await send(
       `${base(settings)}/chat/completions`,
@@ -212,29 +249,102 @@ export async function ask(
       settings,
       deps,
     );
+    usage = {
+      inputTokens: reply?.usage?.prompt_tokens ?? 0,
+      outputTokens: reply?.usage?.completion_tokens ?? 0,
+    };
     const choice = reply?.choices?.[0];
     const call = choice?.message?.tool_calls?.[0];
+    raw = rawAnswer(
+      call?.function?.arguments ?? choice?.message?.content ?? choice?.message,
+    );
     if (choice?.finish_reason === "length") {
-      throw new Error(`${id} gave no complete answer (finish reason: length).`);
+      throw new RejectedAnswer(
+        `${id} gave no complete answer (finish reason: length).`,
+        raw,
+        usage,
+      );
     }
     if (typeof call?.function?.arguments !== "string") {
-      throw new Error(
+      throw new RejectedAnswer(
         `${id} did not call the answer tool (finish reason: ${
           choice?.finish_reason ?? "unknown"
         }).`,
+        raw,
+        usage,
       );
     }
-    json = parseAnswer(call.function.arguments);
-    inputTokens = reply?.usage?.prompt_tokens ?? 0;
-    outputTokens = reply?.usage?.completion_tokens ?? 0;
   }
 
-  return {
-    model: id,
-    json,
-    usage: { inputTokens, outputTokens },
-    askedAt: (deps.now ?? (() => new Date()))().toISOString(),
-  };
+  const json = parseAnswer(raw, usage);
+  const result = validator.validate(json);
+  if (!result.valid) {
+    const reason = result.errors.map((error) =>
+      `${error.instanceLocation || "#"}: ${error.error}`
+    ).join("; ");
+    throw new RejectedAnswer(
+      `The answer does not match the schema: ${reason}`,
+      raw,
+      usage,
+    );
+  }
+  return { json, usage };
+}
+
+/** Ask the configured model, retrying malformed answers with feedback. */
+export async function ask(
+  args: AskArgs,
+  settings: Settings,
+  deps: Deps = {},
+): Promise<Answer> {
+  const validator = new Validator(args.schema);
+  const originalMessage: Message = { role: "user", content: args.prompt };
+  let feedback: Message | undefined;
+  const maxAttempts = args.maxAttempts ?? 2;
+  const reasons: string[] = [];
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const answer = await askOnce(
+        feedback ? [originalMessage, feedback] : [originalMessage],
+        args,
+        settings,
+        deps,
+        validator,
+      );
+      usage.inputTokens += answer.usage.inputTokens;
+      usage.outputTokens += answer.usage.outputTokens;
+      return {
+        model: settings.model,
+        json: answer.json,
+        attempts: attempt,
+        usage,
+        askedAt: (deps.now ?? (() => new Date()))().toISOString(),
+      };
+    } catch (error) {
+      if (!(error instanceof RejectedAnswer)) throw error;
+      usage.inputTokens += error.usage.inputTokens;
+      usage.outputTokens += error.usage.outputTokens;
+      reasons.push(error.message);
+      if (attempt < maxAttempts) {
+        feedback = {
+          role: "user",
+          content:
+            `Your previous answer was rejected: ${error.message}.\nPrevious answer:\n${error.raw}\nAnswer again, following the schema exactly.`,
+        };
+      }
+    }
+  }
+  throw new Error(
+    `${settings.model} gave no valid answer after ${maxAttempts} attempt${
+      maxAttempts === 1 ? "" : "s"
+    }: ${reasons.at(-1)}${
+      reasons.length > 1
+        ? ` (all reasons: ${reasons.map((r, i) => `${i + 1}. ${r}`).join(" ")})`
+        : ""
+    }`,
+  );
 }
 
 /** List the model ids the account can use. */
@@ -281,7 +391,7 @@ interface MethodContext {
 /** The model type: `ask` stores a JSON answer, `models` stores the list of usable model ids. */
 export const model = {
   type: "@mesgme/opencode",
-  version: "2026.10.07.1",
+  version: "2026.10.09.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     answer: {
