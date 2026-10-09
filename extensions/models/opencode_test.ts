@@ -457,10 +457,47 @@ Deno.test("invalid answers stop at the configured attempt limit", async () => {
     await assertRejects(
       () => ask({ ...ARGS, maxAttempts }, SETTINGS, api.deps),
       Error,
-      `after ${maxAttempts} attempts`,
+      `after ${maxAttempts} attempt${maxAttempts === 1 ? "" : "s"}`,
     );
     assertEquals(api.calls.length, maxAttempts);
   }
+});
+
+Deno.test("final error is singular for one attempt and lists every reason for several", async () => {
+  const one = await ask(
+    { ...ARGS, maxAttempts: 1 },
+    SETTINGS,
+    fakeApi(chatReply('{"n":"wrong"}')).deps,
+  ).catch((e: Error) => e.message);
+  assertStringIncludes(String(one), "after 1 attempt:");
+  assertEquals(String(one).includes("all reasons"), false);
+
+  const two = await ask(
+    { ...ARGS, maxAttempts: 2 },
+    SETTINGS,
+    fakeApi([chatReply("first oops"), chatReply('{"n":"wrong"}')]).deps,
+  ).catch((e: Error) => e.message);
+  assertStringIncludes(String(two), "after 2 attempts:");
+  assertStringIncludes(String(two), "(all reasons: 1. ");
+  assertStringIncludes(String(two), " 2. ");
+});
+
+Deno.test("rejection reasons are readable: schema errors name the location, not raw JSON", async () => {
+  const api = fakeApi(chatReply('{"n":"wrong"}'));
+  const message = await ask({ ...ARGS, maxAttempts: 1 }, SETTINGS, api.deps)
+    .catch((e: Error) => e.message);
+  assertStringIncludes(String(message), "does not match the schema: ");
+  assertStringIncludes(String(message), "#/n: Instance type");
+  assertEquals(String(message).includes("instanceLocation"), false);
+});
+
+Deno.test("not-JSON reason shows the start of the answer", async () => {
+  const message = await ask(
+    { ...ARGS, maxAttempts: 1 },
+    SETTINGS,
+    fakeApi(chatReply("not json at all")).deps,
+  ).catch((e: Error) => e.message);
+  assertStringIncludes(String(message), "The answer was not JSON: not json at all");
 });
 
 Deno.test("HTTP 500 is not retried", async () => {

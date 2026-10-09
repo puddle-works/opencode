@@ -141,7 +141,8 @@ function parseAnswer(text: string, usage: TokenUsage): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new RejectedAnswer("The answer was not JSON", text, usage);
+    const head = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+    throw new RejectedAnswer(`The answer was not JSON: ${head}`, text, usage);
   }
 }
 
@@ -278,11 +279,11 @@ async function askOnce(
   const json = parseAnswer(raw, usage);
   const result = validator.validate(json);
   if (!result.valid) {
-    const reason = result.errors.map((error) => JSON.stringify(error)).join(
-      "; ",
-    );
+    const reason = result.errors.map((error) =>
+      `${error.instanceLocation || "#"}: ${error.error}`
+    ).join("; ");
     throw new RejectedAnswer(
-      `The answer did not match the JSON Schema: ${reason}`,
+      `The answer does not match the schema: ${reason}`,
       raw,
       usage,
     );
@@ -336,10 +337,12 @@ export async function ask(
     }
   }
   throw new Error(
-    `${settings.model} gave no valid answer after ${maxAttempts} attempts: ${
-      reasons.at(-1)
-    }. Attempt reasons: ${
-      reasons.map((reason, i) => `${i + 1}: ${reason}`).join("; ")
+    `${settings.model} gave no valid answer after ${maxAttempts} attempt${
+      maxAttempts === 1 ? "" : "s"
+    }: ${reasons.at(-1)}${
+      reasons.length > 1
+        ? ` (all reasons: ${reasons.map((r, i) => `${i + 1}. ${r}`).join(" ")})`
+        : ""
     }`,
   );
 }
