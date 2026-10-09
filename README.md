@@ -3,8 +3,9 @@
 A reusable swamp extension that asks an [OpenCode Zen](https://opencode.ai/zen)
 model for JSON matching a schema the caller supplies. The instance holds the API
 key and the model choice; apps send a prompt and a schema and read back JSON.
-It does not validate the answer against the schema — validate it in the caller
-with your own zod schema.
+It validates the answer against the supplied JSON Schema. Invalid or incomplete
+answers are retried with the rejection reason and previous answer in the prompt.
+Callers can still apply their own schema as a final guard.
 
 ## Settings
 
@@ -18,9 +19,11 @@ with your own zod schema.
 ## Methods
 
 - **`ask`** — arguments `system` (optional), `prompt`, `schema` (a JSON Schema
-  object), `name` (data name, default `answer`; `latest` is refused because swamp
-  reserves it). Stores resource `answer` under `name`:
-  `{ model, json, usage: {inputTokens, outputTokens}, askedAt }`.
+  object), `maxAttempts` (1–5, default 2), `name` (data name, default
+  `answer`; `latest` is refused because swamp reserves it). Stores resource
+  `answer` under `name`:
+  `{ model, json, attempts, usage: {inputTokens, outputTokens}, askedAt }`.
+  Usage sums tokens across all attempts. HTTP errors are returned immediately.
 - **`models`** — lists the model ids the account can use. Stores resource
   `catalog`: `{ models: string[], fetchedAt }`.
 
