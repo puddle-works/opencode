@@ -1,7 +1,7 @@
 /**
- * Tests for @mesgme/opencode.
+ * Tests for @puddleworks/opencode.
  *
- * Run with the "opencode" line of `make test`.
+ * Run with: make test
  *
  * @module
  */
@@ -341,10 +341,19 @@ function ctx(globalArgs: Settings) {
   const writes: Array<
     { specName: string; name: string; data: Record<string, unknown> }
   > = [];
+  const logs: Array<
+    { level: string; message: string; props?: Record<string, unknown> }
+  > = [];
+  const record =
+    (level: string) => (message: string, props?: Record<string, unknown>) => {
+      logs.push({ level, message, props });
+    };
   return {
     writes,
+    logs,
     context: {
       globalArgs,
+      logger: { info: record("info"), warning: record("warning") },
       writeResource: (
         specName: string,
         name: string,
@@ -527,4 +536,126 @@ Deno.test("valid long JSON is parsed in full", async () => {
   const api = fakeApi(chatReply(JSON.stringify({ n: 1, extra: value })));
   const out = await ask(ARGS, SETTINGS, api.deps);
   assertEquals((out.json as { extra: string }).extra, value);
+});
+
+Deno.test("the type is @puddleworks/opencode and requests name it", async () => {
+  assertEquals(model.type, "@puddleworks/opencode");
+  const api = fakeApi({ data: [{ id: "a" }] });
+  await listModels(SETTINGS, api.deps);
+  assertEquals(
+    api.calls[0].headers.get("user-agent"),
+    `puddleworks-opencode/${model.version}`,
+  );
+});
+
+// --- Reserved names, logging and rate limits ---
+
+Deno.test("ask method refuses the name catalog, which models stores under", async () => {
+  const { behaviour } = await import("./opencode.ts");
+  const orig = behaviour.fetch;
+  const api = fakeApi(chatReply());
+  behaviour.fetch = api.deps.fetch;
+  try {
+    const { writes, context } = ctx(SETTINGS);
+    await assertRejects(
+      () => model.methods.ask.execute({ ...ARGS, name: "catalog" }, context),
+      Error,
+      "catalog",
+    );
+    assertEquals(api.calls.length, 0);
+    assertEquals(writes.length, 0);
+  } finally {
+    behaviour.fetch = orig;
+  }
+});
+
+Deno.test("methods log at info on entry and completion, never the API key", async () => {
+  const { behaviour } = await import("./opencode.ts");
+  const orig = behaviour.fetch;
+  try {
+    behaviour.fetch = fakeApi(chatReply()).deps.fetch;
+    const asked = ctx(SETTINGS);
+    await model.methods.ask.execute({ ...ARGS, name: "daily" }, asked.context);
+    assertEquals(asked.logs.map((l) => l.level), ["info", "info"]);
+    assertEquals(asked.logs[0].props?.model, "deepseek-v4.1-flash");
+    assertEquals(asked.logs[1].props?.attempts, 1);
+    assertEquals(asked.logs[1].props?.inputTokens, 11);
+    assertEquals(asked.logs[1].props?.name, "daily");
+
+    behaviour.fetch = fakeApi({ data: [{ id: "a" }] }).deps.fetch;
+    const listed = ctx(SETTINGS);
+    await model.methods.models.execute({}, listed.context);
+    assertEquals(listed.logs.map((l) => l.level), ["info", "info"]);
+    assertEquals(listed.logs[1].props?.count, 1);
+
+    for (const log of [...asked.logs, ...listed.logs]) {
+      assertEquals(
+        JSON.stringify(log).includes(SETTINGS.apiKey),
+        false,
+        "a log line holds the API key",
+      );
+      assertEquals(log.message.includes("${"), false);
+    }
+  } finally {
+    behaviour.fetch = orig;
+  }
+});
+
+/** A fetch giving each call the next [status, body, headers] and recording sleeps. */
+function rateLimitedApi(
+  replies: Array<[number, unknown, Record<string, string>?]>,
+) {
+  const queue = [...replies];
+  let calls = 0;
+  const sleeps: number[] = [];
+  const fetch = (): Promise<Response> => {
+    calls++;
+    const [status, body, headers] = queue.shift() ?? [500, {}];
+    return Promise.resolve(Response.json(body, { status, headers }));
+  };
+  const sleep = (ms: number) => {
+    sleeps.push(ms);
+    return Promise.resolve();
+  };
+  return {
+    sleeps,
+    calls: () => calls,
+    deps: { fetch, now: NOW, sleep },
+  };
+}
+
+Deno.test("429 and 503 wait for Retry-After and try again", async () => {
+  const api = rateLimitedApi([
+    [429, { error: { message: "slow down" } }, { "retry-after": "2" }],
+    [503, { error: { message: "busy" } }],
+    [200, chatReply()],
+  ]);
+  const out = await ask(ARGS, SETTINGS, api.deps);
+  assertEquals((out.json as { n: number }).n, 1);
+  assertEquals(api.calls(), 3);
+  assertEquals(api.sleeps, [2000, 1000]);
+});
+
+Deno.test("Retry-After is capped at 30 seconds", async () => {
+  const api = rateLimitedApi([
+    [429, {}, { "retry-after": "600" }],
+    [200, chatReply()],
+  ]);
+  await ask(ARGS, SETTINGS, api.deps);
+  assertEquals(api.sleeps, [30000]);
+});
+
+Deno.test("rate limiting that does not clear fails with the status after three tries", async () => {
+  const api = rateLimitedApi([
+    [429, { error: { message: "slow down" } }],
+    [429, { error: { message: "slow down" } }],
+    [429, { error: { message: "slow down" } }],
+  ]);
+  await assertRejects(
+    () => ask(ARGS, SETTINGS, api.deps),
+    Error,
+    "HTTP 429",
+  );
+  assertEquals(api.calls(), 3);
+  assertEquals(api.sleeps.length, 2);
 });

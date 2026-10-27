@@ -1,0 +1,22 @@
+{
+  "extension": "@puddleworks/opencode",
+  "version": "2026.10.27.1",
+  "reviewedAt": "2026-10-27T09:48:41Z",
+  "dimensions": [
+    { "id": "credentials-secrets", "verdict": "pass", "note": "apiKey is .meta({ sensitive: true }) and the README creates the instance with vault.get. The key goes only in the x-api-key or authorization header, never in errors, logs or stored data (a test checks the logs)." },
+    { "id": "logging-quality", "verdict": "pass", "note": "Both methods log at info on entry (model and attempt limit, or base URL) and on completion (attempts, token counts and data name, or model count), with structured placeholders only." },
+    { "id": "error-handling", "verdict": "pass", "note": "Every failure throws before writeResource. HTTP errors carry the status and the body's message. Answer-shape failures are retried with feedback; 429/503 are retried after Retry-After; other HTTP errors are thrown at once (tested: HTTP 500 is not retried)." },
+    { "id": "testing-completeness", "verdict": "pass", "note": "36 tests with an injected fetch and sleep: both routes, the GPT refusal, HTTP errors, truncated or missing answers, non-JSON, schema retries with feedback, the attempt limit, reserved names, logging, rate-limit waits and their cap." },
+    { "id": "idempotency-resilience", "verdict": "pass", "note": "No remote resources are created. ask is a query whose answer varies by nature; a rerun stores a new version. Nothing is left half-written when it fails." },
+    { "id": "api-contracts", "verdict": "pass", "note": "Responses are read defensively (optional chaining, missing usage becomes 0, catalogue ids filtered to strings). 429 and 503 honour numeric Retry-After (1s default, 30s cap, three tries in all). Zen's /models is not paginated." },
+    { "id": "resource-management", "verdict": "pass", "note": "Each response body is read in full with res.text(), including retried ones, and AbortSignal.timeout(timeoutMs) bounds every request. No files or temporary state." },
+    { "id": "published-surface-hygiene", "verdict": "pass", "note": "README and tests use the public Zen URL, generic model ids and fake keys. No hostnames, IPs or account ids." },
+    { "id": "schema-strictness", "verdict": "pass", "note": "All schemas are plain z.object with no passthrough. Answer.json is z.unknown on purpose: the caller's JSON Schema validates it." },
+    { "id": "lifetime-gc", "verdict": "pass", "note": "answer: infinite, keep 20 versions. catalog: infinite, keep 5." },
+    { "id": "crud-completeness", "verdict": "na", "note": "Not a CRUD lifecycle behavior; it queries an API." },
+    { "id": "preflight-checks", "verdict": "na", "note": "No method mutates a remote resource." },
+    { "id": "instance-names", "verdict": "pass", "note": "Each method writes one instance. ask refuses latest (swamp's) and catalog (the models method's), so the two specs never share a data name." },
+    { "id": "data-access", "verdict": "na", "note": "No method reads stored state." },
+    { "id": "version-upgrades", "verdict": "pass", "note": "The type is new (@puddleworks/opencode, renamed from the unpublished @mesgme/opencode) and model.version is unchanged with no schema change, so no upgrade entry is needed." }
+  ]
+}
