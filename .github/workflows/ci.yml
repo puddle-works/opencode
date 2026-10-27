@@ -15,20 +15,20 @@ jobs:
           deno-version: 2.9.7
       - run: deno test --allow-read extensions/models/
   contracts:
-    uses: puddle-works/puddle-tooling/.github/workflows/contracts-check.yml@v0.2.0
+    uses: puddle-works/puddle-tooling/.github/workflows/contracts-check.yml@v0.2.1
     with:
-      tooling-ref: v0.2.0
+      tooling-ref: v0.2.1
   guardrails:
-    uses: puddle-works/puddle-tooling/.github/workflows/guardrails-check.yml@v0.2.0
+    uses: puddle-works/puddle-tooling/.github/workflows/guardrails-check.yml@v0.2.1
     with:
-      tooling-ref: v0.2.0
+      tooling-ref: v0.2.1
   publish:
-    uses: puddle-works/puddle-tooling/.github/workflows/publish.yml@v0.2.0
+    uses: puddle-works/puddle-tooling/.github/workflows/publish.yml@v0.2.1
     with:
       visibility: public # must equal visibility: in manifest.yaml
       dry-run: true # false pushes
       tests: deno test --allow-read extensions/models/
-      tooling-ref: v0.2.0
+      tooling-ref: v0.2.1
     secrets:
       SWAMP_API_KEY: ${{ secrets.SWAMP_API_KEY }}
       SWAMP_SIGNIN_TOKEN: ${{ secrets.SWAMP_SIGNIN_TOKEN }}
