@@ -20,12 +20,18 @@ Callers can still apply their own schema as a final guard.
 
 - **`ask`** — arguments `system` (optional), `prompt`, `schema` (a JSON Schema
   object), `maxAttempts` (1–5, default 2), `name` (data name, default
-  `answer`; `latest` is refused because swamp reserves it). Stores resource
-  `answer` under `name`:
+  `answer`; `latest` is refused because swamp reserves it, and `catalog`
+  because `models` stores under it). Stores resource `answer` under `name`:
   `{ model, json, attempts, usage: {inputTokens, outputTokens}, askedAt }`.
-  Usage sums tokens across all attempts. HTTP errors are returned immediately.
+  Usage sums tokens across all attempts. HTTP errors are returned immediately,
+  except 429 and 503 (below).
 - **`models`** — lists the model ids the account can use. Stores resource
   `catalog`: `{ models: string[], fetchedAt }`.
+
+Both methods log at info level when they start and finish. A 429 or 503 reply
+is tried up to three times in all, waiting for `Retry-After` seconds between
+tries (1 second when it is absent, at most 30). If it still fails, the error
+names the status.
 
 Routing on the model id: `claude-*` use `/messages` (`x-api-key`, structured
 `output_config`); GPT models are not supported (they need `/responses`) and fail

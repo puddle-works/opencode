@@ -78,12 +78,29 @@ export type Catalog = z.infer<typeof CatalogSchema>;
 export interface Deps {
   fetch?: typeof globalThis.fetch;
   now?: () => Date;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 // Keep in step with `model.version` below (a test checks it).
 const VERSION = "2026.10.09.1";
 const USER_AGENT = `puddleworks-opencode/${VERSION}`;
 const MAX_TOKENS = 16000;
+// 429 and 503 are retried after Retry-After (1s when absent, at most 30s).
+const BUSY_STATUSES = [429, 503];
+const MAX_TRIES = 3;
+const MAX_WAIT_MS = 30000;
+// Data names `ask` must not use: swamp reserves `latest`, `models` stores `catalog`.
+const RESERVED_NAMES = ["latest", "catalog"];
+
+function waitMs(retryAfter: string | null): number {
+  const seconds = Number(retryAfter);
+  if (!retryAfter || !Number.isFinite(seconds) || seconds < 0) return 1000;
+  return Math.min(seconds * 1000, MAX_WAIT_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface Reply {
   ok: boolean;
@@ -100,11 +117,17 @@ async function send(
   deps: Deps,
 ): Promise<Reply> {
   const doFetch = deps.fetch ?? globalThis.fetch;
-  const res = await doFetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(settings.timeoutMs),
-  });
-  const text = await res.text();
+  let res: Response;
+  let text: string;
+  for (let tries = 1;; tries++) {
+    res = await doFetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(settings.timeoutMs),
+    });
+    text = await res.text();
+    if (!BUSY_STATUSES.includes(res.status) || tries === MAX_TRIES) break;
+    await (deps.sleep ?? sleep)(waitMs(res.headers.get("retry-after")));
+  }
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -381,8 +404,11 @@ export const behaviour: { fetch: typeof globalThis.fetch } = {
   fetch: globalThis.fetch,
 };
 
+type Log = (message: string, props?: Record<string, unknown>) => void;
+
 interface MethodContext {
   globalArgs: Settings;
+  logger: { info: Log; warning: Log };
   writeResource: (
     specName: string,
     name: string,
@@ -416,15 +442,29 @@ export const model = {
         "Send a prompt and a JSON Schema to the configured model and store its JSON answer under `name`.",
       arguments: AskArgsSchema,
       execute: async (args: AskArgs, context: MethodContext) => {
-        if (args.name === "latest") {
+        if (RESERVED_NAMES.includes(args.name)) {
           throw new Error(
-            'The data name "latest" is reserved by swamp; choose another `name`.',
+            `The data name "${args.name}" is reserved (swamp keeps "latest"; the models method stores "catalog"); choose another \`name\`.`,
           );
         }
+        context.logger.info(
+          "Asking {model} for JSON (up to {maxAttempts} attempts)",
+          { model: context.globalArgs.model, maxAttempts: args.maxAttempts },
+        );
         const answer = await ask(args, context.globalArgs, {
           fetch: behaviour.fetch,
         });
         const handle = await context.writeResource("answer", args.name, answer);
+        context.logger.info(
+          "{model} answered (attempts: {attempts}, tokens in: {inputTokens}, out: {outputTokens}); stored as {name}",
+          {
+            model: answer.model,
+            attempts: answer.attempts,
+            inputTokens: answer.usage.inputTokens,
+            outputTokens: answer.usage.outputTokens,
+            name: args.name,
+          },
+        );
         return { dataHandles: [handle] };
       },
     },
@@ -432,6 +472,9 @@ export const model = {
       description: "List the model ids OpenCode Zen offers this account.",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: MethodContext) => {
+        context.logger.info("Listing the models at {baseUrl}", {
+          baseUrl: context.globalArgs.baseUrl,
+        });
         const catalog = await listModels(context.globalArgs, {
           fetch: behaviour.fetch,
         });
@@ -440,6 +483,9 @@ export const model = {
           "catalog",
           catalog,
         );
+        context.logger.info("Stored {count} model ids", {
+          count: catalog.models.length,
+        });
         return { dataHandles: [handle] };
       },
     },
