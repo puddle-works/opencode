@@ -1,4 +1,4 @@
-# @mesgme/opencode
+# @puddleworks/opencode
 
 A reusable swamp extension that asks an [OpenCode Zen](https://opencode.ai/zen)
 model for JSON matching a schema the caller supplies. The instance holds the API
@@ -32,12 +32,21 @@ Routing on the model id: `claude-*` use `/messages` (`x-api-key`, structured
 with a readable error; everything else uses `/chat/completions` with one forced
 function tool whose parameters are the schema.
 
+## Install
+
+```bash
+swamp extension pull @puddleworks/opencode
+```
+
+An app that calls it lists `"@puddleworks/opencode"` under `dependencies:` in
+its manifest, so pulling the app pulls this too.
+
 ## Create an instance
 
 ```bash
 swamp vault create local_encryption opencode   # once; skip if you have a vault
 swamp vault put opencode opencodeApiKey        # prompts for the key
-swamp model create @mesgme/opencode opencode \
+swamp model create @puddleworks/opencode opencode \
   --global-arg 'apiKey=${{ vault.get("opencode", "opencodeApiKey") }}' \
   --global-arg model=deepseek-v4.1-flash
 ```
@@ -69,5 +78,6 @@ Read the answer in a later step with
 ```bash
 DENO=$(swamp doctor extensions --json | jq -r '.denoPath')
 $DENO check extensions/models/opencode.ts
-$DENO test extensions/models/opencode_test.ts
+make test
+make publish VISIBILITY=public DRY_RUN=1
 ```

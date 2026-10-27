@@ -1,5 +1,5 @@
 /**
- * @mesgme/opencode — ask an OpenCode Zen model for JSON matching a schema
+ * @puddleworks/opencode — ask an OpenCode Zen model for JSON matching a schema
  *
  * Holds the OpenCode API key and the model choice once per instance. The `ask`
  * method sends a prompt and a JSON Schema and stores the model's JSON answer;
@@ -80,7 +80,9 @@ export interface Deps {
   now?: () => Date;
 }
 
-const USER_AGENT = "mesgme-opencode/2026.10.09.1";
+// Keep in step with `model.version` below (a test checks it).
+const VERSION = "2026.10.09.1";
+const USER_AGENT = `puddleworks-opencode/${VERSION}`;
 const MAX_TOKENS = 16000;
 
 interface Reply {
@@ -390,7 +392,7 @@ interface MethodContext {
 
 /** The model type: `ask` stores a JSON answer, `models` stores the list of usable model ids. */
 export const model = {
-  type: "@mesgme/opencode",
+  type: "@puddleworks/opencode",
   version: "2026.10.09.1",
   globalArguments: GlobalArgsSchema,
   resources: {

@@ -1,7 +1,13 @@
 manifestVersion: 1
-name: "@mesgme/opencode"
-version: "2026.10.09.1"
+name: "@puddleworks/opencode"
+version: "2026.10.27.1"
 description: "Ask an OpenCode Zen model for JSON matching a schema you give it. Holds the API key and the model choice once per instance."
+repository: "https://github.com/puddle-works/opencode"
+license: MIT
+visibility: public
+labels:
+  - ai
+  - opencode
 additionalFiles:
   - README.md
   - LICENSE

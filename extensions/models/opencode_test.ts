@@ -1,7 +1,7 @@
 /**
- * Tests for @mesgme/opencode.
+ * Tests for @puddleworks/opencode.
  *
- * Run with the "opencode" line of `make test`.
+ * Run with: make test
  *
  * @module
  */
@@ -527,4 +527,14 @@ Deno.test("valid long JSON is parsed in full", async () => {
   const api = fakeApi(chatReply(JSON.stringify({ n: 1, extra: value })));
   const out = await ask(ARGS, SETTINGS, api.deps);
   assertEquals((out.json as { extra: string }).extra, value);
+});
+
+Deno.test("the type is @puddleworks/opencode and requests name it", async () => {
+  assertEquals(model.type, "@puddleworks/opencode");
+  const api = fakeApi({ data: [{ id: "a" }] });
+  await listModels(SETTINGS, api.deps);
+  assertEquals(
+    api.calls[0].headers.get("user-agent"),
+    `puddleworks-opencode/${model.version}`,
+  );
 });
