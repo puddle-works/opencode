@@ -12,7 +12,7 @@
 # of the tagged release. Set PUBLISH_TESTS to what publish runs before pushing
 # (default: make test).
 
-TOOLING_REF ?= v0.2.0
+TOOLING_REF ?= v0.2.1
 TOOLING_URL ?= https://raw.githubusercontent.com/puddle-works/puddle-tooling/$(TOOLING_REF)
 DENO ?= $(shell swamp doctor extensions --json 2>/dev/null | jq -r '.denoPath')
 PUBLISH_TESTS ?= $(MAKE) test
